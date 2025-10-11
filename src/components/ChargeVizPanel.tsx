@@ -1,6 +1,5 @@
 // ---------------------------------------------------------------------------
 // ChargeVizPanel.tsx
-// Responsive Grafana battery visual with trimmed SVG padding.
 // ---------------------------------------------------------------------------
 
 import React from 'react';
@@ -19,11 +18,13 @@ interface ChargeVizOptions {
 
 interface Props extends PanelProps<ChargeVizOptions> {}
 
+// Utility: safely convert any value to a finite number.
 const toFinite = (v: any): number | undefined => {
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 };
 
+// Compute least-squares slope (% per minute) for stable trend estimation.
 function slopePercentPerMinute(times: number[], values: number[]): number {
   const pts: Array<[number, number]> = [];
   for (let i = 0; i < times.length; i++) {
@@ -60,6 +61,9 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
   const useRegression = options.useRegressionForRate ?? false;
   const hideText = options.hideText ?? false;
 
+  // -----------------------------------------------------------------------
+  // Data extraction and basic stats
+  // -----------------------------------------------------------------------
   let currentValue = 0;
   let rate = 0;
   let low = 0;
@@ -101,11 +105,17 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
     }
   }
 
+  // Clamp the percentage range.
   const fillLevel = Math.max(0, Math.min(100, currentValue));
+
+  // Select colour by thresholds.
   let fillColour = highColour;
   if (fillLevel < 30) fillColour = lowColour;
   else if (fillLevel < 70) fillColour = midColour;
 
+  // -----------------------------------------------------------------------
+  // Gradient setup for charge/discharge effect
+  // -----------------------------------------------------------------------
   const gradientId = 'batteryGradient';
   let gradientDef: React.ReactNode = null;
   if (gradientFill) {
@@ -129,115 +139,111 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
     );
   }
 
-  // Dynamic scaling (Option B)
-  const aspectRatio = 0.5;
-  const panelRatio = height / width;
-  let batteryWidth: number;
-  let batteryHeight: number;
-
-  if (panelRatio < aspectRatio) {
-    batteryHeight = height * 0.9;
-    batteryWidth = batteryHeight / aspectRatio;
-  } else {
-    batteryWidth = width * (hideText ? 0.95 : 0.6);
-    batteryHeight = batteryWidth * aspectRatio;
-  }
-
+  // The SVG’s internal fill height (for the battery graphic)
   const fillHeightPx = (fillLevel / 100) * 220;
 
   // -----------------------------------------------------------------------
-  // Render
+  // Render layout
   // -----------------------------------------------------------------------
   return (
     <div
       style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: hideText ? 'center' : 'flex-start',
+        justifyContent: 'flex-start',
         height: '100%',
         width: '100%',
         fontFamily: 'Inter, sans-serif',
         color: theme.colors.text.primary,
-        padding: 2,
+        padding: 0,
         boxSizing: 'border-box',
-        gap: hideText ? '0px' : '6px',
       }}
     >
-      {/* Battery SVG with reduced horizontal padding */}
-      <svg
+      {/* Independent battery element */}
+      <div
         style={{
-          height: `${batteryHeight}px`,
-          width: `${batteryWidth}px`,
           flex: '0 0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
         }}
-        viewBox="0 0 112 240"             // narrower overall width
-        preserveAspectRatio="xMidYMid meet"
       >
-        {gradientDef}
-
-        {/* Outline - starts closer to edges */}
-        <rect
-          x="2"
-          y="10"
-          width="108"                     // narrower outline width
-          height="220"
-          rx="6"
-          ry="6"
-          stroke={theme.colors.text.secondary}
-          strokeWidth="3"
-          fill="none"
-        />
-
-        {/* Terminal */}
-        <rect
-          x="46"
-          y="0"
-          width="20"
-          height="8"
-          rx="2"
-          ry="2"
-          fill={theme.colors.text.secondary}
-        />
-
-        {/* Fill - adjusted for new inner width */}
-        <rect
-          x="4"
-          y={230 - fillHeightPx}
-          width="104"
-          height={fillHeightPx}
-          fill={gradientFill ? `url(#${gradientId})` : fillColour}
-        />
-
-        {/* Text inside battery */}
-        <text
-          x="56"
-          y="120"
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill="#ffffff"
-          fontSize="28"
-          fontWeight="bold"
+        <svg
+          style={{
+            height: '100%',   // fill available panel height
+            width: 'auto',    // preserve natural aspect ratio – crucial fix
+          }}
+          viewBox="0 0 110 240"
+          preserveAspectRatio="xMidYMid meet"
         >
-          {fillLevel.toFixed(0)}%
-        </text>
-      </svg>
+          {gradientDef}
 
-      {/* Optional stats text */}
+          {/* Battery outline */}
+          <rect
+            x="2"
+            y="10"
+            width="106"
+            height="220"
+            rx="6"
+            ry="6"
+            stroke={theme.colors.text.secondary}
+            strokeWidth="3"
+            fill="none"
+          />
+
+          {/* Terminal */}
+          <rect
+            x="45"
+            y="0"
+            width="20"
+            height="8"
+            rx="2"
+            ry="2"
+            fill={theme.colors.text.secondary}
+          />
+
+          {/* Fill area */}
+          <rect
+            x="5"
+            y={230 - fillHeightPx}
+            width="100"
+            height={fillHeightPx}
+            fill={gradientFill ? `url(#${gradientId})` : fillColour}
+          />
+
+          {/* Percentage text inside the battery */}
+          <text
+            x="55"
+            y="120"
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill="#ffffff"
+            fontSize="28"
+            fontWeight="bold"
+          >
+            {fillLevel.toFixed(0)}%
+          </text>
+        </svg>
+      </div>
+
+      {/* Optional side text – vertically centred next to battery */}
       {!hideText && (
         <div
           style={{
+            flex: '1 1 auto',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'center',
-            flex: '1 1 auto',
-            minWidth: 120,
-            overflow: 'hidden',
+            alignItems: 'flex-start',
+            marginLeft: '10px',
             whiteSpace: 'nowrap',
             textOverflow: 'ellipsis',
-            lineHeight: '1.4em',
+            overflow: 'hidden',
+            lineHeight: '1.5em',
           }}
         >
-          <div style={{ fontSize: '1.05em', fontWeight: 600 }}>
+          <div style={{ fontSize: '1.1em', fontWeight: 600 }}>
             Rate: {rate.toFixed(dp)} %/min
           </div>
           <div>Low: {low.toFixed(dp)}%</div>
