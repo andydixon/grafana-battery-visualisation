@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ChargeVizPanel.tsx
-// Responsive Grafana battery visual with fine-tuned spacing and optional text hiding.
+// Responsive Grafana battery visual with trimmed SVG padding.
 // ---------------------------------------------------------------------------
 
 import React from 'react';
@@ -24,7 +24,6 @@ const toFinite = (v: any): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-// Computes a least-squares slope (% per minute) to smooth noisy data.
 function slopePercentPerMinute(times: number[], values: number[]): number {
   const pts: Array<[number, number]> = [];
   for (let i = 0; i < times.length; i++) {
@@ -66,7 +65,6 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
   let low = 0;
   let high = 0;
 
-  // Extract and process first numeric series
   if (data.series.length > 0) {
     const series = data.series[0];
     const valueField = series.fields.find(f => f.type === 'number');
@@ -108,7 +106,6 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
   if (fillLevel < 30) fillColour = lowColour;
   else if (fillLevel < 70) fillColour = midColour;
 
-  // Gradient fill logic
   const gradientId = 'batteryGradient';
   let gradientDef: React.ReactNode = null;
   if (gradientFill) {
@@ -132,7 +129,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
     );
   }
 
-  // -------------------- Dynamic scaling (Option B) ------------------------
+  // Dynamic scaling (Option B)
   const aspectRatio = 0.5;
   const panelRatio = height / width;
   let batteryWidth: number;
@@ -142,14 +139,15 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
     batteryHeight = height * 0.9;
     batteryWidth = batteryHeight / aspectRatio;
   } else {
-    // Use slightly less width when text visible to reduce crowding.
     batteryWidth = width * (hideText ? 0.95 : 0.6);
     batteryHeight = batteryWidth * aspectRatio;
   }
 
   const fillHeightPx = (fillLevel / 100) * 220;
 
-  // -------------------- Render ------------------------
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
   return (
     <div
       style={{
@@ -160,31 +158,31 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
         width: '100%',
         fontFamily: 'Inter, sans-serif',
         color: theme.colors.text.primary,
-        padding: 2,          // minimal padding all round
+        padding: 2,
         boxSizing: 'border-box',
-        gap: hideText ? '0px' : '6px', // half the previous gap
+        gap: hideText ? '0px' : '6px',
       }}
     >
-      {/* Battery SVG */}
+      {/* Battery SVG with reduced horizontal padding */}
       <svg
         style={{
           height: `${batteryHeight}px`,
           width: `${batteryWidth}px`,
           flex: '0 0 auto',
         }}
-        viewBox="0 0 120 240"
+        viewBox="0 0 112 240"             // narrower overall width
         preserveAspectRatio="xMidYMid meet"
       >
         {gradientDef}
 
-        {/* Outline */}
+        {/* Outline - starts closer to edges */}
         <rect
-          x="5"
+          x="2"
           y="10"
-          width="110"
+          width="108"                     // narrower outline width
           height="220"
-          rx="8"
-          ry="8"
+          rx="6"
+          ry="6"
           stroke={theme.colors.text.secondary}
           strokeWidth="3"
           fill="none"
@@ -192,7 +190,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
 
         {/* Terminal */}
         <rect
-          x="50"
+          x="46"
           y="0"
           width="20"
           height="8"
@@ -201,9 +199,9 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
           fill={theme.colors.text.secondary}
         />
 
-        {/* Fill */}
+        {/* Fill - adjusted for new inner width */}
         <rect
-          x="8"
+          x="4"
           y={230 - fillHeightPx}
           width="104"
           height={fillHeightPx}
@@ -212,7 +210,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
 
         {/* Text inside battery */}
         <text
-          x="60"
+          x="56"
           y="120"
           textAnchor="middle"
           dominantBaseline="middle"
@@ -224,7 +222,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
         </text>
       </svg>
 
-      {/* Stats only if enabled */}
+      {/* Optional stats text */}
       {!hideText && (
         <div
           style={{
@@ -233,9 +231,9 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }
             justifyContent: 'center',
             flex: '1 1 auto',
             minWidth: 120,
-            overflow: 'hidden',          // prevent wrapping overflow
-            whiteSpace: 'nowrap',        // stop premature wrapping
-            textOverflow: 'ellipsis',    // if too narrow, ellipsis instead
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            textOverflow: 'ellipsis',
             lineHeight: '1.4em',
           }}
         >
