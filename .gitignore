@@ -1,0 +1,12 @@
+CHANGELOG.md
+dist
+docker-compose.yaml
+eslint.config.mjs
+jest.config.js
+jest-setup.js
+node_modules
+package-lock.json
+playwright.config.ts
+provisioning
+tests
+tsconfig.json
