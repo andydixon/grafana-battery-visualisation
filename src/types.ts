@@ -1,6 +1,15 @@
 export type BatteryOrientation = 'vertical' | 'horizontal';
 
 export interface ChargeVizOptions {
+  // Field selectors
+  chargeField: string;
+  enableLoad: boolean;
+  loadField: string;
+  enableStateField: boolean;
+  stateField: string;
+  stateChargingValue: string;
+  stateDischargingValue: string;
+
   // Colours
   lowColour: string;
   midColour: string;

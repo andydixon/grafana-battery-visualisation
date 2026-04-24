@@ -1,5 +1,5 @@
 import React, { useId, useMemo } from 'react';
-import { PanelProps } from '@grafana/data';
+import { PanelProps, Field } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import { css, keyframes } from '@emotion/css';
 import { ChargeVizOptions } from '../types';
@@ -42,8 +42,23 @@ function slopePercentPerMinute(times: number[], values: number[]): number {
   return den === 0 ? 0 : num / den;
 }
 
+/** Find a field by configured name, falling back to first field of given type. */
+function resolveField(
+  fields: Field[],
+  configuredName: string | undefined,
+  fallbackType: string
+): Field | undefined {
+  if (configuredName) {
+    const match = fields.find((f) => f.name === configuredName);
+    if (match) {
+      return match;
+    }
+  }
+  return fields.find((f) => f.type === fallbackType);
+}
+
 // ---------------------------------------------------------------------------
-// Sub-components (SVG batteries)
+// SVG sub-components
 // ---------------------------------------------------------------------------
 
 interface BatteryGfxProps {
@@ -57,7 +72,6 @@ interface BatteryGfxProps {
   strokeColour: string;
   borderWidth: number;
   showPercentage: boolean;
-  orientation: 'vertical' | 'horizontal';
   animating: boolean;
   textColour: string;
 }
@@ -95,17 +109,14 @@ function VerticalBattery(props: BatteryGfxProps) {
         </clipPath>
       </defs>
 
-      {/* Terminal nub */}
       <rect x="38" y="2" width="34" height="12" rx="4" ry="4" fill={strokeColour} />
 
-      {/* Body outline */}
       <rect
         x={bodyX} y={bodyY} width={bodyW} height={bodyH}
         rx={r} ry={r}
         stroke={strokeColour} strokeWidth={borderWidth} fill="none"
       />
 
-      {/* Fill — clipped to body shape */}
       <rect
         x={bodyX}
         y={bodyY + bodyH - fillH}
@@ -162,17 +173,14 @@ function HorizontalBattery(props: BatteryGfxProps) {
         </clipPath>
       </defs>
 
-      {/* Terminal nub (right side) */}
       <rect x={bodyX + bodyW + 2} y="33" width="12" height="34" rx="4" ry="4" fill={strokeColour} />
 
-      {/* Body outline */}
       <rect
         x={bodyX} y={bodyY} width={bodyW} height={bodyH}
         rx={r} ry={r}
         stroke={strokeColour} strokeWidth={borderWidth} fill="none"
       />
 
-      {/* Fill */}
       <rect
         x={bodyX}
         y={bodyY}
@@ -197,6 +205,81 @@ function HorizontalBattery(props: BatteryGfxProps) {
           {fillLevel.toFixed(0)}%
         </text>
       )}
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Load gauge – a semi-circular arc rendered as SVG
+// ---------------------------------------------------------------------------
+
+interface LoadGaugeProps {
+  value: number;        // 0–100
+  size: number;         // px diameter
+  colour: string;
+  trackColour: string;
+  textColour: string;
+}
+
+function LoadGauge({ value, size, colour, trackColour, textColour }: LoadGaugeProps) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const r = 40;
+  const cx = 50;
+  const cy = 50;
+  const startAngle = 135;
+  const totalSweep = 270;
+  const endAngle = startAngle + (clamped / 100) * totalSweep;
+
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const arcPoint = (angle: number) => ({
+    x: cx + r * Math.cos(toRad(angle)),
+    y: cy + r * Math.sin(toRad(angle)),
+  });
+
+  // Track (background arc)
+  const trackEnd = startAngle + totalSweep;
+  const tStart = arcPoint(startAngle);
+  const tEnd = arcPoint(trackEnd);
+  const trackLargeArc = totalSweep > 180 ? 1 : 0;
+  const trackPath = `M ${tStart.x} ${tStart.y} A ${r} ${r} 0 ${trackLargeArc} 1 ${tEnd.x} ${tEnd.y}`;
+
+  // Value arc
+  const vStart = arcPoint(startAngle);
+  const vEnd = arcPoint(endAngle);
+  const sweep = (clamped / 100) * totalSweep;
+  const largeArc = sweep > 180 ? 1 : 0;
+  const valuePath = clamped > 0
+    ? `M ${vStart.x} ${vStart.y} A ${r} ${r} 0 ${largeArc} 1 ${vEnd.x} ${vEnd.y}`
+    : '';
+
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size}>
+      <path d={trackPath} fill="none" stroke={trackColour} strokeWidth="8" strokeLinecap="round" />
+      {valuePath && (
+        <path d={valuePath} fill="none" stroke={colour} strokeWidth="8" strokeLinecap="round" />
+      )}
+      <text
+        x={cx}
+        y={cy - 2}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill={textColour}
+        fontSize="18"
+        fontWeight="bold"
+      >
+        {clamped.toFixed(0)}%
+      </text>
+      <text
+        x={cx}
+        y={cy + 14}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill={textColour}
+        fontSize="9"
+        opacity="0.7"
+      >
+        LOAD
+      </text>
     </svg>
   );
 }
@@ -227,26 +310,31 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   const showRate = options.showRate ?? true;
   const showLowHigh = options.showLowHigh ?? true;
   const showStatus = options.showStatus ?? true;
-
-  const showAnyStats = showRate || showLowHigh || showStatus;
+  const enableLoad = options.enableLoad ?? false;
+  const enableStateField = options.enableStateField ?? false;
+  const stateChargingValue = (options.stateChargingValue ?? 'charging').toLowerCase();
+  const stateDischargingValue = (options.stateDischargingValue ?? 'discharging').toLowerCase();
 
   // -----------------------------------------------------------------------
   // Data extraction
   // -----------------------------------------------------------------------
-  const { currentValue, rate, low, high } = useMemo(() => {
+  const extracted = useMemo(() => {
     let cur = 0;
     let r = 0;
     let lo = 0;
     let hi = 0;
+    let loadValue: number | undefined;
+    let stateFromField: 'charging' | 'discharging' | 'stable' | undefined;
 
     if (data.series.length > 0) {
       const series = data.series[0];
-      const valueField = series.fields.find((f) => f.type === 'number');
-      const timeField = series.fields.find((f) => f.type === 'time');
+      const fields = series.fields;
+      const timeField = fields.find((f) => f.type === 'time');
+      const chargeField = resolveField(fields, options.chargeField, 'number');
 
-      if (valueField && timeField) {
-        const rawValues = valueField.values.toArray();
-        const rawTimes = timeField.values.toArray();
+      if (chargeField && timeField) {
+        const rawValues = Array.from(chargeField.values);
+        const rawTimes = Array.from(timeField.values);
         const values: number[] = [];
         const times: number[] = [];
 
@@ -275,10 +363,47 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
           }
         }
       }
+
+      // Load field
+      if (enableLoad && options.loadField) {
+        const lf = fields.find((f) => f.name === options.loadField);
+        if (lf) {
+          const arr = Array.from(lf.values);
+          const last = toFinite(arr[arr.length - 1]);
+          if (last !== undefined) {
+            loadValue = last;
+          }
+        }
+      }
+
+      // State field
+      if (enableStateField && options.stateField) {
+        const sf = fields.find((f) => f.name === options.stateField);
+        if (sf) {
+          const arr = Array.from(sf.values);
+          const lastRaw = arr[arr.length - 1];
+          if (lastRaw !== undefined && lastRaw !== null) {
+            const v = String(lastRaw).toLowerCase().trim();
+            if (v === stateChargingValue) {
+              stateFromField = 'charging';
+            } else if (v === stateDischargingValue) {
+              stateFromField = 'discharging';
+            } else {
+              stateFromField = 'stable';
+            }
+          }
+        }
+      }
     }
 
-    return { currentValue: cur, rate: r, low: lo, high: hi };
-  }, [data.series, useRegression]);
+    return { currentValue: cur, rate: r, low: lo, high: hi, loadValue, stateFromField };
+  }, [
+    data.series, useRegression, enableLoad, enableStateField,
+    options.chargeField, options.loadField, options.stateField,
+    stateChargingValue, stateDischargingValue,
+  ]);
+
+  const { currentValue, rate, low, high, loadValue, stateFromField } = extracted;
 
   // -----------------------------------------------------------------------
   // Derived visual values
@@ -294,34 +419,41 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
 
   let startColour = fillColour;
   let endColour = fillColour;
+
+  // Determine charging state: prefer state field, else use computed rate
+  const isCharging = stateFromField ? stateFromField === 'charging' : rate > 0;
+  const isDischarging = stateFromField ? stateFromField === 'discharging' : rate < 0;
+
   if (gradientFill) {
-    if (rate > 0) {
+    if (isCharging) {
       endColour = theme.colors.success.text;
-    } else if (rate < 0) {
+    } else if (isDischarging) {
       startColour = theme.colors.error.text;
     }
   }
 
-  const isCharging = rate > 0;
-  const isDischarging = rate < 0;
   const animating = chargingAnimation && isCharging;
 
+  const showAnyStats = showRate || showLowHigh || showStatus;
+  const hasExtras = (enableLoad && loadValue !== undefined);
+
   // -----------------------------------------------------------------------
-  // Responsive layout decisions
+  // Responsive layout
   // -----------------------------------------------------------------------
   const isCompact = orientation === 'vertical' ? width < 140 : height < 100;
   const isTiny = width < 80 || height < 80;
 
-  // Stats go beside the battery or below/beside it depending on space
   const useColumnLayout = orientation === 'vertical'
-    ? width < 220
-    : height < 180;
+    ? width < 240
+    : height < 200;
 
-  // Scale stat font size to available space
   const statAreaSize = useColumnLayout
     ? (orientation === 'vertical' ? height * 0.3 : width * 0.3)
     : (orientation === 'vertical' ? width * 0.5 : height * 0.5);
   const baseFontSize = Math.max(10, Math.min(16, statAreaSize / 8));
+
+  // Gauge size scales with available panel space
+  const gaugeSize = Math.max(48, Math.min(120, Math.min(width, height) * 0.35));
 
   // No-data state
   if (data.series.length === 0) {
@@ -362,7 +494,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   `;
 
   const batteryWrapStyle = css`
-    flex: ${showAnyStats && !isTiny ? '1 1 auto' : '1 1 100%'};
+    flex: 1 1 auto;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -372,26 +504,33 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
     overflow: hidden;
   `;
 
-  const statsStyle = css`
+  const sidePanelStyle = css`
     flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     align-items: ${useColumnLayout ? 'center' : 'flex-start'};
     justify-content: center;
-    gap: 2px;
-    font-size: ${baseFontSize}px;
-    line-height: 1.4;
+    gap: 6px;
     overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
     max-width: 100%;
   `;
 
-  const statusStyle = css`
+  const statsStyle = css`
+    display: flex;
+    flex-direction: column;
+    align-items: inherit;
+    gap: 2px;
+    font-size: ${baseFontSize}px;
+    line-height: 1.4;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  `;
+
+  const statusBadgeStyle = css`
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
+    padding: 2px 10px;
     border-radius: 12px;
     font-size: ${baseFontSize * 0.9}px;
     font-weight: 600;
@@ -407,12 +546,17 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
         : theme.colors.text.secondary};
   `;
 
-  // Determine readable text colour for the percentage overlay
-  const textColour = fillLevel > 45 && fillLevel < 85
-    ? '#ffffff'
-    : fillLevel <= 45
-      ? theme.colors.text.primary
-      : '#ffffff';
+  const loadCardStyle = css`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px;
+    border-radius: 8px;
+    background: ${theme.colors.background.secondary};
+    border: 1px solid ${theme.colors.border.weak};
+  `;
+
+  const textColour = fillLevel > 45 ? '#ffffff' : theme.colors.text.primary;
 
   const batteryProps: BatteryGfxProps = {
     fillLevel,
@@ -425,10 +569,17 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
     strokeColour: theme.colors.text.secondary,
     borderWidth,
     showPercentage: showPercentage && !isTiny,
-    orientation,
     animating,
     textColour,
   };
+
+  // Load gauge colour: green if low load, amber if moderate, red if high
+  const loadClamped = loadValue !== undefined ? Math.max(0, Math.min(100, loadValue)) : 0;
+  const loadColour = loadClamped >= 80
+    ? theme.colors.error.text
+    : loadClamped >= 50
+      ? theme.colors.warning.text
+      : theme.colors.success.text;
 
   // -----------------------------------------------------------------------
   // Render
@@ -442,29 +593,60 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
         }
       </div>
 
-      {showAnyStats && !isTiny && (
-        <div className={statsStyle}>
-          {showRate && (
-            <div>
-              <span style={{ opacity: 0.7, marginRight: 4 }}>Rate</span>
-              <strong>{rate.toFixed(dp)} %/min</strong>
+      {(showAnyStats || hasExtras) && !isTiny && (
+        <div className={sidePanelStyle}>
+          {/* Load gauge card */}
+          {hasExtras && !isCompact && (
+            <div className={loadCardStyle}>
+              <LoadGauge
+                value={loadClamped}
+                size={gaugeSize}
+                colour={loadColour}
+                trackColour={theme.colors.border.weak}
+                textColour={theme.colors.text.primary}
+              />
             </div>
           )}
-          {showLowHigh && (
-            <>
-              <div>
-                <span style={{ opacity: 0.7, marginRight: 4 }}>Low</span>
-                <strong>{low.toFixed(dp)}%</strong>
-              </div>
-              <div>
-                <span style={{ opacity: 0.7, marginRight: 4 }}>High</span>
-                <strong>{high.toFixed(dp)}%</strong>
-              </div>
-            </>
+
+          {/* Compact load fallback when gauge doesn't fit */}
+          {hasExtras && isCompact && (
+            <div className={css`
+              font-size: ${baseFontSize}px;
+              white-space: nowrap;
+            `}>
+              <span style={{ opacity: 0.7, marginRight: 4 }}>Load</span>
+              <strong style={{ color: loadColour }}>{loadClamped.toFixed(0)}%</strong>
+            </div>
           )}
+
+          {/* Status badge */}
           {showStatus && !isCompact && (
-            <div className={statusStyle}>
+            <div className={statusBadgeStyle}>
               {isCharging ? '⚡ Charging' : isDischarging ? '↓ Discharging' : '— Stable'}
+            </div>
+          )}
+
+          {/* Stats */}
+          {(showRate || showLowHigh) && (
+            <div className={statsStyle}>
+              {showRate && (
+                <div>
+                  <span style={{ opacity: 0.7, marginRight: 4 }}>Rate</span>
+                  <strong>{rate.toFixed(dp)} %/min</strong>
+                </div>
+              )}
+              {showLowHigh && (
+                <>
+                  <div>
+                    <span style={{ opacity: 0.7, marginRight: 4 }}>Low</span>
+                    <strong>{low.toFixed(dp)}%</strong>
+                  </div>
+                  <div>
+                    <span style={{ opacity: 0.7, marginRight: 4 }}>High</span>
+                    <strong>{high.toFixed(dp)}%</strong>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
