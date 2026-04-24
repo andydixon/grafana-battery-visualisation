@@ -42,6 +42,40 @@ function slopePercentPerMinute(times: number[], values: number[]): number {
   return den === 0 ? 0 : num / den;
 }
 
+/** Infer battery state from the trend of the last ≤ maxPoints values. */
+function inferStateFromTrend(
+  values: number[],
+  maxPoints = 50,
+  threshold = 0.01,
+): 'charging' | 'discharging' | 'stable' {
+  const tail = values.length > maxPoints ? values.slice(-maxPoints) : values;
+  if (tail.length < 2) {
+    return 'stable';
+  }
+
+  // Simple least-squares slope over the tail window
+  const n = tail.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += tail[i];
+    sumXY += i * tail[i];
+    sumXX += i * i;
+  }
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+
+  if (slope > threshold) {
+    return 'charging';
+  }
+  if (slope < -threshold) {
+    return 'discharging';
+  }
+  return 'stable';
+}
+
 /** Find a field by configured name, falling back to first field of given type. */
 function resolveField(
   fields: Field[],
@@ -325,6 +359,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
     let hi = 0;
     let loadValue: number | undefined;
     let stateFromField: 'charging' | 'discharging' | 'stable' | undefined;
+    let inferredState: 'charging' | 'discharging' | 'stable' = 'stable';
 
     if (data.series.length > 0) {
       const series = data.series[0];
@@ -361,6 +396,9 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
               r = deltaMinutes !== 0 ? deltaPercent / deltaMinutes : 0;
             }
           }
+
+          // Infer state from recent trend (last ≤ 50 points)
+          inferredState = inferStateFromTrend(values);
         }
       }
 
@@ -396,14 +434,14 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
       }
     }
 
-    return { currentValue: cur, rate: r, low: lo, high: hi, loadValue, stateFromField };
+    return { currentValue: cur, rate: r, low: lo, high: hi, loadValue, stateFromField, inferredState };
   }, [
     data.series, useRegression, enableLoad, enableStateField,
     options.chargeField, options.loadField, options.stateField,
     stateChargingValue, stateDischargingValue,
   ]);
 
-  const { currentValue, rate, low, high, loadValue, stateFromField } = extracted;
+  const { currentValue, rate, low, high, loadValue, stateFromField, inferredState } = extracted;
 
   // -----------------------------------------------------------------------
   // Derived visual values
@@ -420,9 +458,10 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   let startColour = fillColour;
   let endColour = fillColour;
 
-  // Determine charging state: prefer state field, else use computed rate
-  const isCharging = stateFromField ? stateFromField === 'charging' : rate > 0;
-  const isDischarging = stateFromField ? stateFromField === 'discharging' : rate < 0;
+  // Determine charging state: state field → inferred trend from last ≤50 points → stable
+  const resolvedState = stateFromField ?? inferredState;
+  const isCharging = resolvedState === 'charging';
+  const isDischarging = resolvedState === 'discharging';
 
   if (gradientFill) {
     if (isCharging) {
@@ -622,7 +661,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
           {/* Status badge */}
           {showStatus && !isCompact && (
             <div className={statusBadgeStyle}>
-              {isCharging ? '⚡ Charging' : isDischarging ? '↓ Discharging' : '— Stable'}
+              {isCharging ? '⚡ Charging' : isDischarging ? '🔋 On Battery' : '— Stable'}
             </div>
           )}
 
