@@ -76,6 +76,22 @@ function inferStateFromTrend(
   return 'stable';
 }
 
+/** Format minutes into a human-readable duration string. */
+function formatMinutes(mins: number): string {
+  if (!Number.isFinite(mins) || mins < 0) {
+    return '—';
+  }
+  if (mins < 1) {
+    return '< 1 min';
+  }
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (h === 0) {
+    return `${m} min`;
+  }
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 /** Find a field by configured name, falling back to first field of given type. */
 function resolveField(
   fields: Field[],
@@ -335,7 +351,6 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   const lowThreshold = options.lowThreshold ?? 30;
   const highThreshold = options.highThreshold ?? 70;
   const gradientFill = options.gradientFill ?? true;
-  const orientation = options.orientation ?? 'vertical';
   const chargingAnimation = options.chargingAnimation ?? true;
   const borderWidth = options.borderWidth ?? 3;
   const dp = Number.isFinite(options.decimalPlaces) ? options.decimalPlaces : 2;
@@ -345,6 +360,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   const showLowHigh = options.showLowHigh ?? true;
   const showStatus = options.showStatus ?? true;
   const enableLoad = options.enableLoad ?? false;
+  const enableTimeLeft = options.enableTimeLeft ?? false;
   const enableStateField = options.enableStateField ?? false;
   const stateChargingValue = (options.stateChargingValue ?? 'charging').toLowerCase();
   const stateDischargingValue = (options.stateDischargingValue ?? 'discharging').toLowerCase();
@@ -358,6 +374,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
     let lo = 0;
     let hi = 0;
     let loadValue: number | undefined;
+    let timeLeftValue: number | undefined;
     let stateFromField: 'charging' | 'discharging' | 'stable' | undefined;
     let inferredState: 'charging' | 'discharging' | 'stable' = 'stable';
 
@@ -414,6 +431,18 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
         }
       }
 
+      // Time remaining field
+      if (enableTimeLeft && options.timeLeftField) {
+        const tf = fields.find((f) => f.name === options.timeLeftField);
+        if (tf) {
+          const arr = Array.from(tf.values);
+          const last = toFinite(arr[arr.length - 1]);
+          if (last !== undefined) {
+            timeLeftValue = last;
+          }
+        }
+      }
+
       // State field
       if (enableStateField && options.stateField) {
         const sf = fields.find((f) => f.name === options.stateField);
@@ -434,14 +463,14 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
       }
     }
 
-    return { currentValue: cur, rate: r, low: lo, high: hi, loadValue, stateFromField, inferredState };
+    return { currentValue: cur, rate: r, low: lo, high: hi, loadValue, timeLeftValue, stateFromField, inferredState };
   }, [
-    data.series, useRegression, enableLoad, enableStateField,
-    options.chargeField, options.loadField, options.stateField,
+    data.series, useRegression, enableLoad, enableTimeLeft, enableStateField,
+    options.chargeField, options.loadField, options.timeLeftField, options.stateField,
     stateChargingValue, stateDischargingValue,
   ]);
 
-  const { currentValue, rate, low, high, loadValue, stateFromField, inferredState } = extracted;
+  const { currentValue, rate, low, high, loadValue, timeLeftValue, stateFromField, inferredState } = extracted;
 
   // -----------------------------------------------------------------------
   // Derived visual values
@@ -474,21 +503,31 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   const animating = chargingAnimation && isCharging;
 
   const showAnyStats = showRate || showLowHigh || showStatus;
-  const hasExtras = (enableLoad && loadValue !== undefined);
+  const hasLoadExtra = enableLoad && loadValue !== undefined;
+  const hasTimeLeftExtra = enableTimeLeft && timeLeftValue !== undefined;
+  const hasExtras = hasLoadExtra || hasTimeLeftExtra;
 
   // -----------------------------------------------------------------------
   // Responsive layout
   // -----------------------------------------------------------------------
-  const isCompact = orientation === 'vertical' ? width < 140 : height < 100;
+
+  // Auto-revert horizontal to vertical when the panel is too narrow
+  // for horizontal battery + side content to fit comfortably.
+  const preferredOrientation = options.orientation ?? 'vertical';
+  const effectiveOrientation = preferredOrientation === 'horizontal' && width < 300
+    ? 'vertical'
+    : preferredOrientation;
+
+  const isCompact = effectiveOrientation === 'vertical' ? width < 140 : height < 100;
   const isTiny = width < 80 || height < 80;
 
-  const useColumnLayout = orientation === 'vertical'
+  const useColumnLayout = effectiveOrientation === 'vertical'
     ? width < 240
     : height < 200;
 
   const statAreaSize = useColumnLayout
-    ? (orientation === 'vertical' ? height * 0.3 : width * 0.3)
-    : (orientation === 'vertical' ? width * 0.5 : height * 0.5);
+    ? (effectiveOrientation === 'vertical' ? height * 0.3 : width * 0.3)
+    : (effectiveOrientation === 'vertical' ? width * 0.5 : height * 0.5);
   const baseFontSize = Math.max(10, Math.min(16, statAreaSize / 8));
 
   // Gauge size scales with available panel space
@@ -626,7 +665,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
   return (
     <div className={containerStyle} data-testid="charge-viz-panel">
       <div className={batteryWrapStyle}>
-        {orientation === 'vertical'
+        {effectiveOrientation === 'vertical'
           ? <VerticalBattery {...batteryProps} />
           : <HorizontalBattery {...batteryProps} />
         }
@@ -635,7 +674,7 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
       {(showAnyStats || hasExtras) && !isTiny && (
         <div className={sidePanelStyle}>
           {/* Load gauge card */}
-          {hasExtras && !isCompact && (
+          {hasLoadExtra && !isCompact && (
             <div className={loadCardStyle}>
               <LoadGauge
                 value={loadClamped}
@@ -648,13 +687,38 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
           )}
 
           {/* Compact load fallback when gauge doesn't fit */}
-          {hasExtras && isCompact && (
+          {hasLoadExtra && isCompact && (
             <div className={css`
               font-size: ${baseFontSize}px;
               white-space: nowrap;
             `}>
               <span style={{ opacity: 0.7, marginRight: 4 }}>Load</span>
               <strong style={{ color: loadColour }}>{loadClamped.toFixed(0)}%</strong>
+            </div>
+          )}
+
+          {/* Time remaining */}
+          {hasTimeLeftExtra && (
+            <div className={css`
+              display: flex;
+              align-items: center;
+              gap: 6px;
+              padding: 4px 10px;
+              border-radius: 8px;
+              background: ${theme.colors.background.secondary};
+              border: 1px solid ${theme.colors.border.weak};
+              white-space: nowrap;
+              font-size: ${baseFontSize}px;
+            `}>
+              <span style={{ fontSize: baseFontSize * 1.1, lineHeight: 1 }}>⏱</span>
+              <div>
+                <div style={{ opacity: 0.7, fontSize: baseFontSize * 0.8, lineHeight: 1.2 }}>
+                  Time remaining
+                </div>
+                <strong style={{ fontSize: baseFontSize * 1.15 }}>
+                  {formatMinutes(timeLeftValue!)}
+                </strong>
+              </div>
             </div>
           )}
 

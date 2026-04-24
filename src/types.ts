@@ -5,6 +5,8 @@ export interface ChargeVizOptions {
   chargeField: string;
   enableLoad: boolean;
   loadField: string;
+  enableTimeLeft: boolean;
+  timeLeftField: string;
   enableStateField: boolean;
   stateField: string;
   stateChargingValue: string;

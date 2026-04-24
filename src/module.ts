@@ -5,15 +5,12 @@ import { ChargeVizOptions } from './types';
 export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanelOptions(
   (builder) => {
     // -- Field Mapping category (top) --
-    builder.addFieldNamePicker({
+    builder.addTextInput({
       path: 'chargeField',
-      name: 'Charge field',
+      name: 'Charge field name',
+      defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Numeric field that represents battery charge (0–100%). If blank, the first number field is used.',
-      settings: {
-        filter: (f) => f.type === 'number',
-        noFieldsMessage: 'No numeric fields found',
-      },
+      description: 'Name of the numeric field for battery charge (0–100%). Leave blank to use the first number field.',
     });
 
     builder.addBooleanSwitch({
@@ -24,16 +21,30 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
       description: 'Show a second metric representing current load / power draw.',
     });
 
-    builder.addFieldNamePicker({
+    builder.addTextInput({
       path: 'loadField',
-      name: 'Load field',
+      name: 'Load field name',
+      defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Numeric field for load percentage (0–100%).',
-      settings: {
-        filter: (f) => f.type === 'number',
-        noFieldsMessage: 'No numeric fields found',
-      },
+      description: 'Name of the numeric field for load percentage (0–100%).',
       showIf: (opts) => opts.enableLoad === true,
+    });
+
+    builder.addBooleanSwitch({
+      path: 'enableTimeLeft',
+      name: 'Enable time remaining',
+      defaultValue: false,
+      category: ['Field Mapping'],
+      description: 'Show estimated time remaining from a data field (value in minutes).',
+    });
+
+    builder.addTextInput({
+      path: 'timeLeftField',
+      name: 'Time remaining field name',
+      defaultValue: '',
+      category: ['Field Mapping'],
+      description: 'Name of the numeric field for estimated time remaining (in minutes).',
+      showIf: (opts) => opts.enableTimeLeft === true,
     });
 
     builder.addBooleanSwitch({
@@ -41,17 +52,15 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
       name: 'Enable state field',
       defaultValue: false,
       category: ['Field Mapping'],
-      description: 'Use a field from the data to determine charging / discharging state instead of computing it from the rate.',
+      description: 'Use a data field to determine charging / discharging state instead of inferring from the trend.',
     });
 
-    builder.addFieldNamePicker({
+    builder.addTextInput({
       path: 'stateField',
-      name: 'State field',
+      name: 'State field name',
+      defaultValue: '',
       category: ['Field Mapping'],
-      description: 'String or numeric field whose value indicates the battery state.',
-      settings: {
-        noFieldsMessage: 'No fields found',
-      },
+      description: 'Name of the field whose value indicates battery state.',
       showIf: (opts) => opts.enableStateField === true,
     });
 
@@ -137,7 +146,7 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
           { value: 'horizontal', label: 'Horizontal' },
         ],
       },
-      description: 'Battery orientation. Horizontal works well in wide, short panels.',
+      description: 'Preferred orientation. Auto-reverts to vertical if the panel is too narrow for horizontal.',
     });
 
     builder.addBooleanSwitch({
