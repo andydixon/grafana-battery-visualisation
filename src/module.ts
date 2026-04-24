@@ -1,16 +1,57 @@
-import { PanelPlugin } from '@grafana/data';
+import { PanelPlugin, SelectableValue } from '@grafana/data';
 import { ChargeVizPanel } from './components/ChargeVizPanel';
 import { ChargeVizOptions } from './types';
 
+/**
+ * Build a list of selectable field identifiers from the panel's data frames.
+ * Each option label shows "fieldName (refId)" so users can distinguish
+ * fields from different queries.
+ */
+function buildFieldOptions(data: Array<{ fields: Array<{ name: string; type: string }>; refId?: string; name?: string }>): Array<SelectableValue<string>> {
+  const opts: Array<SelectableValue<string>> = [
+    { label: '— Auto (first number field)', value: '' },
+  ];
+  const seen = new Set<string>();
+
+  for (const frame of data) {
+    const label = frame.refId || frame.name || '';
+    for (const field of frame.fields) {
+      if (field.type === 'time') {
+        continue;
+      }
+      // Use "refId:fieldName" as a unique key to handle multiple series
+      // with identically-named fields.
+      const key = label ? `${label}:${field.name}` : field.name;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      const display = label ? `${field.name}  (${label})` : field.name;
+      opts.push({ label: display, value: key });
+    }
+  }
+
+  return opts;
+}
+
 export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanelOptions(
-  (builder) => {
+  (builder, context) => {
+    const fieldOptions = buildFieldOptions(context.data ?? []);
+    const fieldOptionsNoAuto = fieldOptions.filter((o) => o.value !== '');
+
     // -- Field Mapping category (top) --
-    builder.addTextInput({
+    builder.addSelect({
       path: 'chargeField',
-      name: 'Charge field name',
+      name: 'Charge field',
       defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Name of the numeric field for battery charge (0–100%). Leave blank to use the first number field.',
+      description: 'Numeric field for battery charge (0–100%).',
+      settings: {
+        allowCustomValue: true,
+        isClearable: true,
+        options: fieldOptions,
+      },
     });
 
     builder.addBooleanSwitch({
@@ -21,12 +62,17 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
       description: 'Show a second metric representing current load / power draw.',
     });
 
-    builder.addTextInput({
+    builder.addSelect({
       path: 'loadField',
-      name: 'Load field name',
+      name: 'Load field',
       defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Name of the numeric field for load percentage (0–100%).',
+      description: 'Numeric field for load percentage (0–100%).',
+      settings: {
+        allowCustomValue: true,
+        isClearable: true,
+        options: fieldOptionsNoAuto,
+      },
       showIf: (opts) => opts.enableLoad === true,
     });
 
@@ -38,12 +84,17 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
       description: 'Show estimated time remaining from a data field (value in minutes).',
     });
 
-    builder.addTextInput({
+    builder.addSelect({
       path: 'timeLeftField',
-      name: 'Time remaining field name',
+      name: 'Time remaining field',
       defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Name of the numeric field for estimated time remaining (in minutes).',
+      description: 'Numeric field for estimated time remaining (in minutes).',
+      settings: {
+        allowCustomValue: true,
+        isClearable: true,
+        options: fieldOptionsNoAuto,
+      },
       showIf: (opts) => opts.enableTimeLeft === true,
     });
 
@@ -55,12 +106,17 @@ export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanel
       description: 'Use a data field to determine charging / discharging state instead of inferring from the trend.',
     });
 
-    builder.addTextInput({
+    builder.addSelect({
       path: 'stateField',
-      name: 'State field name',
+      name: 'State field',
       defaultValue: '',
       category: ['Field Mapping'],
-      description: 'Name of the field whose value indicates battery state.',
+      description: 'Field whose value indicates battery state.',
+      settings: {
+        allowCustomValue: true,
+        isClearable: true,
+        options: fieldOptionsNoAuto,
+      },
       showIf: (opts) => opts.enableStateField === true,
     });
 
