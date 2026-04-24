@@ -1,256 +1,472 @@
-// ---------------------------------------------------------------------------
-// ChargeVizPanel.tsx
-// ---------------------------------------------------------------------------
-
-import React from 'react';
+import React, { useId, useMemo } from 'react';
 import { PanelProps } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-
-interface ChargeVizOptions {
-  lowColour: string;
-  midColour: string;
-  highColour: string;
-  gradientFill: boolean;
-  decimalPlaces: number;
-  useRegressionForRate: boolean;
-  hideText: boolean;
-}
+import { css, keyframes } from '@emotion/css';
+import { ChargeVizOptions } from '../types';
 
 interface Props extends PanelProps<ChargeVizOptions> {}
 
-// Utility: safely convert any value to a finite number.
-const toFinite = (v: any): number | undefined => {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const toFinite = (v: unknown): number | undefined => {
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 };
 
-// Compute least-squares slope (% per minute) for stable trend estimation.
 function slopePercentPerMinute(times: number[], values: number[]): number {
   const pts: Array<[number, number]> = [];
   for (let i = 0; i < times.length; i++) {
     const t = toFinite(times[i]);
     const v = toFinite(values[i]);
-    if (t !== undefined && v !== undefined) pts.push([t, v]);
+    if (t !== undefined && v !== undefined) {
+      pts.push([t, v]);
+    }
   }
-  if (pts.length < 2) return 0;
+  if (pts.length < 2) {
+    return 0;
+  }
 
-  const xs = pts.map(p => (p[0] - pts[0][0]) / 60000);
-  const ys = pts.map(p => p[1]);
+  const xs = pts.map((p) => (p[0] - pts[0][0]) / 60000);
+  const ys = pts.map((p) => p[1]);
   const xMean = xs.reduce((a, b) => a + b, 0) / xs.length;
   const yMean = ys.reduce((a, b) => a + b, 0) / ys.length;
 
   let num = 0;
   let den = 0;
   for (let i = 0; i < xs.length; i++) {
-    const dx = xs[i] - xMean;
-    const dy = ys[i] - yMean;
-    num += dx * dy;
-    den += dx * dx;
+    num += (xs[i] - xMean) * (ys[i] - yMean);
+    den += (xs[i] - xMean) ** 2;
   }
   return den === 0 ? 0 : num / den;
 }
 
-export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options }) => {
-  const theme = useTheme2();
+// ---------------------------------------------------------------------------
+// Sub-components (SVG batteries)
+// ---------------------------------------------------------------------------
 
+interface BatteryGfxProps {
+  fillLevel: number;
+  fillColour: string;
+  gradientFill: boolean;
+  gradientId: string;
+  clipId: string;
+  startColour: string;
+  endColour: string;
+  strokeColour: string;
+  borderWidth: number;
+  showPercentage: boolean;
+  orientation: 'vertical' | 'horizontal';
+  animating: boolean;
+  textColour: string;
+}
+
+const pulseKf = keyframes`
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+`;
+
+function VerticalBattery(props: BatteryGfxProps) {
+  const {
+    fillLevel, fillColour, gradientFill, gradientId, clipId,
+    startColour, endColour, strokeColour, borderWidth, showPercentage,
+    animating, textColour,
+  } = props;
+
+  const bodyX = 5;
+  const bodyY = 14;
+  const bodyW = 100;
+  const bodyH = 220;
+  const r = 8;
+  const fillH = (fillLevel / 100) * bodyH;
+
+  return (
+    <svg viewBox="0 0 110 244" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">
+      <defs>
+        {gradientFill && (
+          <linearGradient id={gradientId} x1="0" y1="1" x2="0" y2="0">
+            <stop offset="0%" stopColor={startColour} />
+            <stop offset="100%" stopColor={endColour} />
+          </linearGradient>
+        )}
+        <clipPath id={clipId}>
+          <rect x={bodyX} y={bodyY} width={bodyW} height={bodyH} rx={r} ry={r} />
+        </clipPath>
+      </defs>
+
+      {/* Terminal nub */}
+      <rect x="38" y="2" width="34" height="12" rx="4" ry="4" fill={strokeColour} />
+
+      {/* Body outline */}
+      <rect
+        x={bodyX} y={bodyY} width={bodyW} height={bodyH}
+        rx={r} ry={r}
+        stroke={strokeColour} strokeWidth={borderWidth} fill="none"
+      />
+
+      {/* Fill — clipped to body shape */}
+      <rect
+        x={bodyX}
+        y={bodyY + bodyH - fillH}
+        width={bodyW}
+        height={fillH}
+        fill={gradientFill ? `url(#${gradientId})` : fillColour}
+        clipPath={`url(#${clipId})`}
+        className={animating ? css`animation: ${pulseKf} 2s ease-in-out infinite;` : undefined}
+      />
+
+      {showPercentage && (
+        <text
+          x={bodyX + bodyW / 2}
+          y={bodyY + bodyH / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill={textColour}
+          fontSize="28"
+          fontWeight="bold"
+          style={{ pointerEvents: 'none' }}
+        >
+          {fillLevel.toFixed(0)}%
+        </text>
+      )}
+    </svg>
+  );
+}
+
+function HorizontalBattery(props: BatteryGfxProps) {
+  const {
+    fillLevel, fillColour, gradientFill, gradientId, clipId,
+    startColour, endColour, strokeColour, borderWidth, showPercentage,
+    animating, textColour,
+  } = props;
+
+  const bodyX = 5;
+  const bodyY = 5;
+  const bodyW = 220;
+  const bodyH = 100;
+  const r = 8;
+  const fillW = (fillLevel / 100) * bodyW;
+
+  return (
+    <svg viewBox="0 0 248 110" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">
+      <defs>
+        {gradientFill && (
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={startColour} />
+            <stop offset="100%" stopColor={endColour} />
+          </linearGradient>
+        )}
+        <clipPath id={clipId}>
+          <rect x={bodyX} y={bodyY} width={bodyW} height={bodyH} rx={r} ry={r} />
+        </clipPath>
+      </defs>
+
+      {/* Terminal nub (right side) */}
+      <rect x={bodyX + bodyW + 2} y="33" width="12" height="34" rx="4" ry="4" fill={strokeColour} />
+
+      {/* Body outline */}
+      <rect
+        x={bodyX} y={bodyY} width={bodyW} height={bodyH}
+        rx={r} ry={r}
+        stroke={strokeColour} strokeWidth={borderWidth} fill="none"
+      />
+
+      {/* Fill */}
+      <rect
+        x={bodyX}
+        y={bodyY}
+        width={fillW}
+        height={bodyH}
+        fill={gradientFill ? `url(#${gradientId})` : fillColour}
+        clipPath={`url(#${clipId})`}
+        className={animating ? css`animation: ${pulseKf} 2s ease-in-out infinite;` : undefined}
+      />
+
+      {showPercentage && (
+        <text
+          x={bodyX + bodyW / 2}
+          y={bodyY + bodyH / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill={textColour}
+          fontSize="28"
+          fontWeight="bold"
+          style={{ pointerEvents: 'none' }}
+        >
+          {fillLevel.toFixed(0)}%
+        </text>
+      )}
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main panel
+// ---------------------------------------------------------------------------
+
+export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, id }) => {
+  const theme = useTheme2();
+  const reactId = useId();
+  const gradientId = `battGrad-${id}-${reactId}`;
+  const clipId = `battClip-${id}-${reactId}`;
+
+  // Options with defaults
   const lowColour = options.lowColour || '#F44336';
   const midColour = options.midColour || '#FF9800';
   const highColour = options.highColour || '#4CAF50';
+  const lowThreshold = options.lowThreshold ?? 30;
+  const highThreshold = options.highThreshold ?? 70;
   const gradientFill = options.gradientFill ?? true;
+  const orientation = options.orientation ?? 'vertical';
+  const chargingAnimation = options.chargingAnimation ?? true;
+  const borderWidth = options.borderWidth ?? 3;
   const dp = Number.isFinite(options.decimalPlaces) ? options.decimalPlaces : 2;
   const useRegression = options.useRegressionForRate ?? false;
-  const hideText = options.hideText ?? false;
+  const showPercentage = options.showPercentage ?? true;
+  const showRate = options.showRate ?? true;
+  const showLowHigh = options.showLowHigh ?? true;
+  const showStatus = options.showStatus ?? true;
+
+  const showAnyStats = showRate || showLowHigh || showStatus;
 
   // -----------------------------------------------------------------------
-  // Data extraction and basic stats
+  // Data extraction
   // -----------------------------------------------------------------------
-  let currentValue = 0;
-  let rate = 0;
-  let low = 0;
-  let high = 0;
+  const { currentValue, rate, low, high } = useMemo(() => {
+    let cur = 0;
+    let r = 0;
+    let lo = 0;
+    let hi = 0;
 
-  if (data.series.length > 0) {
-    const series = data.series[0];
-    const valueField = series.fields.find(f => f.type === 'number');
-    const timeField = series.fields.find(f => f.type === 'time');
+    if (data.series.length > 0) {
+      const series = data.series[0];
+      const valueField = series.fields.find((f) => f.type === 'number');
+      const timeField = series.fields.find((f) => f.type === 'time');
 
-    if (valueField && timeField) {
-      const rawValues = valueField.values.toArray();
-      const rawTimes = timeField.values.toArray();
-      const values: number[] = [];
-      const times: number[] = [];
+      if (valueField && timeField) {
+        const rawValues = valueField.values.toArray();
+        const rawTimes = timeField.values.toArray();
+        const values: number[] = [];
+        const times: number[] = [];
 
-      for (let i = 0; i < rawValues.length; i++) {
-        const v = toFinite(rawValues[i]);
-        const t = toFinite(rawTimes[i]);
-        if (v !== undefined && t !== undefined) {
-          values.push(v);
-          times.push(t);
+        for (let i = 0; i < rawValues.length; i++) {
+          const v = toFinite(rawValues[i]);
+          const t = toFinite(rawTimes[i]);
+          if (v !== undefined && t !== undefined) {
+            values.push(v);
+            times.push(t);
+          }
         }
-      }
 
-      if (values.length > 0) {
-        currentValue = values[values.length - 1];
-        low = Math.min(...values);
-        high = Math.max(...values);
+        if (values.length > 0) {
+          cur = values[values.length - 1];
+          lo = Math.min(...values);
+          hi = Math.max(...values);
 
-        if (useRegression && values.length >= 2) {
-          rate = slopePercentPerMinute(times, values);
-        } else if (values.length >= 2) {
-          const deltaPercent = values[values.length - 1] - values[0];
-          const deltaMinutes = (times[times.length - 1] - times[0]) / 60000;
-          rate = deltaMinutes !== 0 ? deltaPercent / deltaMinutes : 0;
+          if (values.length >= 2) {
+            if (useRegression) {
+              r = slopePercentPerMinute(times, values);
+            } else {
+              const deltaPercent = values[values.length - 1] - values[0];
+              const deltaMinutes = (times[times.length - 1] - times[0]) / 60000;
+              r = deltaMinutes !== 0 ? deltaPercent / deltaMinutes : 0;
+            }
+          }
         }
       }
     }
-  }
 
-  // Clamp the percentage range.
+    return { currentValue: cur, rate: r, low: lo, high: hi };
+  }, [data.series, useRegression]);
+
+  // -----------------------------------------------------------------------
+  // Derived visual values
+  // -----------------------------------------------------------------------
   const fillLevel = Math.max(0, Math.min(100, currentValue));
 
-  // Select colour by thresholds.
-  let fillColour = highColour;
-  if (fillLevel < 30) fillColour = lowColour;
-  else if (fillLevel < 70) fillColour = midColour;
+  let fillColour = midColour;
+  if (fillLevel < lowThreshold) {
+    fillColour = lowColour;
+  } else if (fillLevel >= highThreshold) {
+    fillColour = highColour;
+  }
 
-  // -----------------------------------------------------------------------
-  // Gradient setup for charge/discharge effect
-  // -----------------------------------------------------------------------
-  const gradientId = 'batteryGradient';
-  let gradientDef: React.ReactNode = null;
+  let startColour = fillColour;
+  let endColour = fillColour;
   if (gradientFill) {
-    let startColour = fillColour;
-    let endColour = fillColour;
     if (rate > 0) {
-      startColour = fillColour;
       endColour = theme.colors.success.text;
     } else if (rate < 0) {
       startColour = theme.colors.error.text;
-      endColour = fillColour;
     }
+  }
 
-    gradientDef = (
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="1" x2="0" y2="0">
-          <stop offset="0%" stopColor={startColour} />
-          <stop offset="100%" stopColor={endColour} />
-        </linearGradient>
-      </defs>
+  const isCharging = rate > 0;
+  const isDischarging = rate < 0;
+  const animating = chargingAnimation && isCharging;
+
+  // -----------------------------------------------------------------------
+  // Responsive layout decisions
+  // -----------------------------------------------------------------------
+  const isCompact = orientation === 'vertical' ? width < 140 : height < 100;
+  const isTiny = width < 80 || height < 80;
+
+  // Stats go beside the battery or below/beside it depending on space
+  const useColumnLayout = orientation === 'vertical'
+    ? width < 220
+    : height < 180;
+
+  // Scale stat font size to available space
+  const statAreaSize = useColumnLayout
+    ? (orientation === 'vertical' ? height * 0.3 : width * 0.3)
+    : (orientation === 'vertical' ? width * 0.5 : height * 0.5);
+  const baseFontSize = Math.max(10, Math.min(16, statAreaSize / 8));
+
+  // No-data state
+  if (data.series.length === 0) {
+    return (
+      <div
+        className={css`
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          width: 100%;
+          color: ${theme.colors.text.secondary};
+          font-size: 14px;
+        `}
+        data-testid="charge-viz-panel"
+      >
+        No data
+      </div>
     );
   }
 
-  // The SVG’s internal fill height (for the battery graphic)
-  const fillHeightPx = (fillLevel / 100) * 220;
+  // -----------------------------------------------------------------------
+  // Styles
+  // -----------------------------------------------------------------------
+  const containerStyle = css`
+    display: flex;
+    flex-direction: ${useColumnLayout ? 'column' : 'row'};
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    padding: 4px;
+    box-sizing: border-box;
+    gap: ${useColumnLayout ? '2px' : '8px'};
+    overflow: hidden;
+    font-family: Inter, Helvetica, Arial, sans-serif;
+    color: ${theme.colors.text.primary};
+  `;
+
+  const batteryWrapStyle = css`
+    flex: ${showAnyStats && !isTiny ? '1 1 auto' : '1 1 100%'};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    ${useColumnLayout ? 'width: 100%;' : 'height: 100%;'}
+    overflow: hidden;
+  `;
+
+  const statsStyle = css`
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: ${useColumnLayout ? 'center' : 'flex-start'};
+    justify-content: center;
+    gap: 2px;
+    font-size: ${baseFontSize}px;
+    line-height: 1.4;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  `;
+
+  const statusStyle = css`
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: ${baseFontSize * 0.9}px;
+    font-weight: 600;
+    background: ${isCharging
+      ? theme.colors.success.transparent
+      : isDischarging
+        ? theme.colors.error.transparent
+        : theme.colors.secondary.transparent};
+    color: ${isCharging
+      ? theme.colors.success.text
+      : isDischarging
+        ? theme.colors.error.text
+        : theme.colors.text.secondary};
+  `;
+
+  // Determine readable text colour for the percentage overlay
+  const textColour = fillLevel > 45 && fillLevel < 85
+    ? '#ffffff'
+    : fillLevel <= 45
+      ? theme.colors.text.primary
+      : '#ffffff';
+
+  const batteryProps: BatteryGfxProps = {
+    fillLevel,
+    fillColour,
+    gradientFill,
+    gradientId,
+    clipId,
+    startColour,
+    endColour,
+    strokeColour: theme.colors.text.secondary,
+    borderWidth,
+    showPercentage: showPercentage && !isTiny,
+    orientation,
+    animating,
+    textColour,
+  };
 
   // -----------------------------------------------------------------------
-  // Render layout
+  // Render
   // -----------------------------------------------------------------------
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        height: '100%',
-        width: '100%',
-        fontFamily: 'Inter, sans-serif',
-        color: theme.colors.text.primary,
-        padding: 0,
-        boxSizing: 'border-box',
-      }}
-    >
-      {/* Independent battery element */}
-      <div
-        style={{
-          flex: '0 0 auto',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-        }}
-      >
-        <svg
-          style={{
-            height: '100%',   // fill available panel height
-            width: 'auto',    // preserve natural aspect ratio – crucial fix
-          }}
-          viewBox="0 0 110 240"
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {gradientDef}
-
-          {/* Battery outline */}
-          <rect
-            x="2"
-            y="10"
-            width="106"
-            height="220"
-            rx="6"
-            ry="6"
-            stroke={theme.colors.text.secondary}
-            strokeWidth="3"
-            fill="none"
-          />
-
-          {/* Terminal */}
-          <rect
-            x="45"
-            y="0"
-            width="20"
-            height="8"
-            rx="2"
-            ry="2"
-            fill={theme.colors.text.secondary}
-          />
-
-          {/* Fill area */}
-          <rect
-            x="5"
-            y={230 - fillHeightPx}
-            width="100"
-            height={fillHeightPx}
-            fill={gradientFill ? `url(#${gradientId})` : fillColour}
-          />
-
-          {/* Percentage text inside the battery */}
-          <text
-            x="55"
-            y="120"
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill="#ffffff"
-            fontSize="28"
-            fontWeight="bold"
-          >
-            {fillLevel.toFixed(0)}%
-          </text>
-        </svg>
+    <div className={containerStyle} data-testid="charge-viz-panel">
+      <div className={batteryWrapStyle}>
+        {orientation === 'vertical'
+          ? <VerticalBattery {...batteryProps} />
+          : <HorizontalBattery {...batteryProps} />
+        }
       </div>
 
-      {/* Optional side text – vertically centred next to battery */}
-      {!hideText && (
-        <div
-          style={{
-            flex: '1 1 auto',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'flex-start',
-            marginLeft: '10px',
-            whiteSpace: 'nowrap',
-            textOverflow: 'ellipsis',
-            overflow: 'hidden',
-            lineHeight: '1.5em',
-          }}
-        >
-          <div style={{ fontSize: '1.1em', fontWeight: 600 }}>
-            Rate: {rate.toFixed(dp)} %/min
-          </div>
-          <div>Low: {low.toFixed(dp)}%</div>
-          <div>High: {high.toFixed(dp)}%</div>
-          <div style={{ opacity: 0.8 }}>
-            {rate > 0 ? 'Charging ↑' : rate < 0 ? 'Discharging ↓' : 'Stable'}
-          </div>
+      {showAnyStats && !isTiny && (
+        <div className={statsStyle}>
+          {showRate && (
+            <div>
+              <span style={{ opacity: 0.7, marginRight: 4 }}>Rate</span>
+              <strong>{rate.toFixed(dp)} %/min</strong>
+            </div>
+          )}
+          {showLowHigh && (
+            <>
+              <div>
+                <span style={{ opacity: 0.7, marginRight: 4 }}>Low</span>
+                <strong>{low.toFixed(dp)}%</strong>
+              </div>
+              <div>
+                <span style={{ opacity: 0.7, marginRight: 4 }}>High</span>
+                <strong>{high.toFixed(dp)}%</strong>
+              </div>
+            </>
+          )}
+          {showStatus && !isCompact && (
+            <div className={statusStyle}>
+              {isCharging ? '⚡ Charging' : isDischarging ? '↓ Discharging' : '— Stable'}
+            </div>
+          )}
         </div>
       )}
     </div>
