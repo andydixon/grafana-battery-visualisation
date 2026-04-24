@@ -1,87 +1,144 @@
-// Import PanelPlugin to register our React component as a Grafana panel.
 import { PanelPlugin } from '@grafana/data';
-// Import the component itself.
 import { ChargeVizPanel } from './components/ChargeVizPanel';
+import { ChargeVizOptions } from './types';
 
-/**
- * Re-declare the options interface here to keep this file self-contained for the editor.
- * These must match the props used in ChargeVizPanel.
- */
-interface ChargeVizOptions {
-  lowColour: string;
-  midColour: string;
-  highColour: string;
-  gradientFill: boolean;
-  decimalPlaces: number;
-  useRegressionForRate: boolean;
-}
-
-/**
- * Export the plugin instance that Grafana will discover.
- * We also define the panel editor options so users can configure colours and behaviour.
- */
 export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanelOptions(
-  // The builder lets us declare editor controls (colour pickers, switches, number inputs).
   (builder) => {
-    // Colour: low battery
+    // -- Colours category --
     builder.addColorPicker({
-      path: 'lowColour',                 // option field name
-      name: 'Low battery colour',        // label in the editor
-      defaultValue: '#F44336',           // sensible default (red)
-      description: 'Colour when the level is under 30%.',
+      path: 'lowColour',
+      name: 'Low battery colour',
+      defaultValue: '#F44336',
+      category: ['Colours'],
+      description: 'Colour when charge is below the low threshold.',
     });
 
-    // Colour: medium battery
     builder.addColorPicker({
       path: 'midColour',
       name: 'Medium battery colour',
-      defaultValue: '#FF9800',           // amber
-      description: 'Colour when the level is between 30% and 70%.',
+      defaultValue: '#FF9800',
+      category: ['Colours'],
+      description: 'Colour when charge is between the low and high thresholds.',
     });
 
-    // Colour: high battery
     builder.addColorPicker({
       path: 'highColour',
       name: 'High battery colour',
-      defaultValue: '#4CAF50',           // green
-      description: 'Colour when the level is above 70%.',
+      defaultValue: '#4CAF50',
+      category: ['Colours'],
+      description: 'Colour when charge is above the high threshold.',
     });
 
-    // Toggle for gradient fill.
+    // -- Thresholds category --
+    builder.addNumberInput({
+      path: 'lowThreshold',
+      name: 'Low threshold (%)',
+      defaultValue: 30,
+      settings: { min: 0, max: 100, integer: true },
+      category: ['Thresholds'],
+      description: 'Charge level below which the low colour is used.',
+    });
+
+    builder.addNumberInput({
+      path: 'highThreshold',
+      name: 'High threshold (%)',
+      defaultValue: 70,
+      settings: { min: 0, max: 100, integer: true },
+      category: ['Thresholds'],
+      description: 'Charge level above which the high colour is used.',
+    });
+
+    // -- Appearance category --
     builder.addBooleanSwitch({
       path: 'gradientFill',
-      name: 'Enable gradient fill',
+      name: 'Gradient fill',
       defaultValue: true,
-      description: 'Show a subtle gradient that hints charging/discharging.',
+      category: ['Appearance'],
+      description: 'Show a gradient that hints at charging/discharging direction.',
     });
 
-    // Numeric input: decimal places for numbers shown in the stats.
+    builder.addSelect({
+      path: 'orientation',
+      name: 'Orientation',
+      defaultValue: 'vertical',
+      category: ['Appearance'],
+      settings: {
+        options: [
+          { value: 'vertical', label: 'Vertical' },
+          { value: 'horizontal', label: 'Horizontal' },
+        ],
+      },
+      description: 'Battery orientation. Horizontal works well in wide, short panels.',
+    });
+
+    builder.addBooleanSwitch({
+      path: 'chargingAnimation',
+      name: 'Charging animation',
+      defaultValue: true,
+      category: ['Appearance'],
+      description: 'Show a pulse animation when the battery is charging.',
+    });
+
+    builder.addNumberInput({
+      path: 'borderWidth',
+      name: 'Border width',
+      defaultValue: 3,
+      settings: { min: 1, max: 8, integer: true },
+      category: ['Appearance'],
+      description: 'Thickness of the battery outline.',
+    });
+
+    // -- Display category --
+    builder.addBooleanSwitch({
+      path: 'showPercentage',
+      name: 'Show percentage',
+      defaultValue: true,
+      category: ['Display'],
+      description: 'Show the percentage text inside the battery.',
+    });
+
+    builder.addBooleanSwitch({
+      path: 'showRate',
+      name: 'Show charge rate',
+      defaultValue: true,
+      category: ['Display'],
+      description: 'Show the rate of change (%/min).',
+    });
+
+    builder.addBooleanSwitch({
+      path: 'showLowHigh',
+      name: 'Show low / high',
+      defaultValue: true,
+      category: ['Display'],
+      description: 'Show the minimum and maximum values from the series.',
+    });
+
+    builder.addBooleanSwitch({
+      path: 'showStatus',
+      name: 'Show charging status',
+      defaultValue: true,
+      category: ['Display'],
+      description: 'Show Charging / Discharging / Stable indicator.',
+    });
+
+    // -- Data category --
     builder.addNumberInput({
       path: 'decimalPlaces',
       name: 'Decimal places',
       defaultValue: 2,
       settings: { min: 0, max: 6, integer: true },
-      description: 'How many decimal places to use for rate/low/high.',
+      category: ['Data'],
+      description: 'Decimal places for rate / low / high values.',
     });
 
-    builder.addBooleanSwitch({
-      path: 'hideText',
-      name: 'Hide stats text (battery only)',
-      defaultValue: false,
-      description: 'If enabled, hides the rate and high/low text, showing only the battery graphic.',
-    });
-
-
-    // Toggle: use regression for rate instead of simple first/last.
     builder.addBooleanSwitch({
       path: 'useRegressionForRate',
       name: 'Use regression for rate',
       defaultValue: false,
-      description:
-        'Compute %/min using more complicated maths.',
+      category: ['Data'],
+      description: 'Compute %/min using least-squares regression instead of simple first/last difference.',
     });
 
-    // Return the builder so Grafana applies the options.
     return builder;
   }
 );
