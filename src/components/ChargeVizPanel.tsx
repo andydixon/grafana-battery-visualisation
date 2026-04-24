@@ -1,5 +1,5 @@
 import React, { useId, useMemo } from 'react';
-import { PanelProps, Field } from '@grafana/data';
+import { PanelProps, Field, DataFrame } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import { css, keyframes } from '@emotion/css';
 import { ChargeVizOptions } from '../types';
@@ -92,19 +92,83 @@ function formatMinutes(mins: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-/** Find a field by configured name, falling back to first field of given type. */
-function resolveField(
-  fields: Field[],
-  configuredName: string | undefined,
-  fallbackType: string
-): Field | undefined {
-  if (configuredName) {
-    const match = fields.find((f) => f.name === configuredName);
-    if (match) {
-      return match;
+/**
+ * Resolve a field across all data frames using the "refId:fieldName" key
+ * format produced by the dropdown, or a plain field name for manual entry.
+ * Returns the matching field and its companion time field, or undefined.
+ */
+function resolveFieldByKey(
+  series: DataFrame[],
+  key: string | undefined,
+): { field: Field; timeField: Field } | undefined {
+  if (!key) {
+    return undefined;
+  }
+
+  // Try "refId:fieldName" format first
+  const colonIdx = key.indexOf(':');
+  if (colonIdx > 0) {
+    const refId = key.substring(0, colonIdx);
+    const fieldName = key.substring(colonIdx + 1);
+
+    for (const frame of series) {
+      if (frame.refId !== refId && frame.name !== refId) {
+        continue;
+      }
+      const timeField = frame.fields.find((f) => f.type === 'time');
+      const match = frame.fields.find((f) => f.name === fieldName && f.type !== 'time');
+      if (match && timeField) {
+        return { field: match, timeField };
+      }
     }
   }
-  return fields.find((f) => f.type === fallbackType);
+
+  // Fallback: search all frames by field name, display name, frame name, or refId
+  const needle = key.toLowerCase().trim();
+  for (const frame of series) {
+    const timeField = frame.fields.find((f) => f.type === 'time');
+    if (!timeField) {
+      continue;
+    }
+
+    for (const field of frame.fields) {
+      if (field.type === 'time') {
+        continue;
+      }
+
+      const candidates = [
+        field.name,
+        field.config?.displayName,
+        field.config?.displayNameFromDS,
+        frame.name,
+        frame.refId,
+      ];
+
+      for (const c of candidates) {
+        if (c && c.toLowerCase().trim() === needle) {
+          return { field, timeField };
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Get the first numeric field from the first series (default fallback).
+ */
+function getFirstNumericField(
+  series: DataFrame[],
+): { field: Field; timeField: Field } | undefined {
+  for (const frame of series) {
+    const timeField = frame.fields.find((f) => f.type === 'time');
+    const numField = frame.fields.find((f) => f.type === 'number');
+    if (numField && timeField) {
+      return { field: numField, timeField };
+    }
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,15 +442,16 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
     let stateFromField: 'charging' | 'discharging' | 'stable' | undefined;
     let inferredState: 'charging' | 'discharging' | 'stable' = 'stable';
 
-    if (data.series.length > 0) {
-      const series = data.series[0];
-      const fields = series.fields;
-      const timeField = fields.find((f) => f.type === 'time');
-      const chargeField = resolveField(fields, options.chargeField, 'number');
+    const allSeries = data.series;
 
-      if (chargeField && timeField) {
-        const rawValues = Array.from(chargeField.values);
-        const rawTimes = Array.from(timeField.values);
+    if (allSeries.length > 0) {
+      // Resolve the charge field: user selection → first numeric field
+      const chargeResolved = resolveFieldByKey(allSeries, options.chargeField)
+        ?? getFirstNumericField(allSeries);
+
+      if (chargeResolved) {
+        const rawValues = Array.from(chargeResolved.field.values);
+        const rawTimes = Array.from(chargeResolved.timeField.values);
         const values: number[] = [];
         const times: number[] = [];
 
@@ -414,16 +479,15 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
             }
           }
 
-          // Infer state from recent trend (last ≤ 50 points)
           inferredState = inferStateFromTrend(values);
         }
       }
 
-      // Load field
+      // Load field — search across all series
       if (enableLoad && options.loadField) {
-        const lf = fields.find((f) => f.name === options.loadField);
-        if (lf) {
-          const arr = Array.from(lf.values);
+        const loadResolved = resolveFieldByKey(allSeries, options.loadField);
+        if (loadResolved) {
+          const arr = Array.from(loadResolved.field.values);
           const last = toFinite(arr[arr.length - 1]);
           if (last !== undefined) {
             loadValue = last;
@@ -431,11 +495,11 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
         }
       }
 
-      // Time remaining field
+      // Time remaining field — search across all series
       if (enableTimeLeft && options.timeLeftField) {
-        const tf = fields.find((f) => f.name === options.timeLeftField);
-        if (tf) {
-          const arr = Array.from(tf.values);
+        const tlResolved = resolveFieldByKey(allSeries, options.timeLeftField);
+        if (tlResolved) {
+          const arr = Array.from(tlResolved.field.values);
           const last = toFinite(arr[arr.length - 1]);
           if (last !== undefined) {
             timeLeftValue = last;
@@ -443,11 +507,11 @@ export const ChargeVizPanel: React.FC<Props> = ({ data, width, height, options, 
         }
       }
 
-      // State field
+      // State field — search across all series
       if (enableStateField && options.stateField) {
-        const sf = fields.find((f) => f.name === options.stateField);
-        if (sf) {
-          const arr = Array.from(sf.values);
+        const stateResolved = resolveFieldByKey(allSeries, options.stateField);
+        if (stateResolved) {
+          const arr = Array.from(stateResolved.field.values);
           const lastRaw = arr[arr.length - 1];
           if (lastRaw !== undefined && lastRaw !== null) {
             const v = String(lastRaw).toLowerCase().trim();
