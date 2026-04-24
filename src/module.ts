@@ -4,6 +4,75 @@ import { ChargeVizOptions } from './types';
 
 export const plugin = new PanelPlugin<ChargeVizOptions>(ChargeVizPanel).setPanelOptions(
   (builder) => {
+    // -- Field Mapping category (top) --
+    builder.addFieldNamePicker({
+      path: 'chargeField',
+      name: 'Charge field',
+      category: ['Field Mapping'],
+      description: 'Numeric field that represents battery charge (0–100%). If blank, the first number field is used.',
+      settings: {
+        filter: (f) => f.type === 'number',
+        noFieldsMessage: 'No numeric fields found',
+      },
+    });
+
+    builder.addBooleanSwitch({
+      path: 'enableLoad',
+      name: 'Enable load metric',
+      defaultValue: false,
+      category: ['Field Mapping'],
+      description: 'Show a second metric representing current load / power draw.',
+    });
+
+    builder.addFieldNamePicker({
+      path: 'loadField',
+      name: 'Load field',
+      category: ['Field Mapping'],
+      description: 'Numeric field for load percentage (0–100%).',
+      settings: {
+        filter: (f) => f.type === 'number',
+        noFieldsMessage: 'No numeric fields found',
+      },
+      showIf: (opts) => opts.enableLoad === true,
+    });
+
+    builder.addBooleanSwitch({
+      path: 'enableStateField',
+      name: 'Enable state field',
+      defaultValue: false,
+      category: ['Field Mapping'],
+      description: 'Use a field from the data to determine charging / discharging state instead of computing it from the rate.',
+    });
+
+    builder.addFieldNamePicker({
+      path: 'stateField',
+      name: 'State field',
+      category: ['Field Mapping'],
+      description: 'String or numeric field whose value indicates the battery state.',
+      settings: {
+        noFieldsMessage: 'No fields found',
+      },
+      showIf: (opts) => opts.enableStateField === true,
+    });
+
+    builder.addTextInput({
+      path: 'stateChargingValue',
+      name: 'Charging value',
+      defaultValue: 'charging',
+      category: ['Field Mapping'],
+      description: 'Value in the state field that means "charging" (case-insensitive).',
+      showIf: (opts) => opts.enableStateField === true,
+    });
+
+    builder.addTextInput({
+      path: 'stateDischargingValue',
+      name: 'Discharging value',
+      defaultValue: 'discharging',
+      category: ['Field Mapping'],
+      description: 'Value in the state field that means "discharging" (case-insensitive).',
+      showIf: (opts) => opts.enableStateField === true,
+    });
+
     // -- Colours category --
     builder.addColorPicker({
       path: 'lowColour',
